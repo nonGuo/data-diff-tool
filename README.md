@@ -72,14 +72,40 @@ pip install -e ".[dev]"
 
 数据库连接支持三种配置方式（优先级从高到低）：
 
-### 方式一：DSN 连接串
+### 方式一：配置文件（推荐）
+
+创建 `dws_sources.yaml` 文件，按数据库名组织连接信息：
+
+```yaml
+sources:
+  edw:
+    host: 10.0.1.100
+    port: 8000
+    user: admin
+    password: changeme
+  ods:
+    host: 10.0.2.200
+    port: 8000
+    user: readonly
+    password: changeme
+```
+
+工具会自动从 Excel 中的表 FQN（如 `edw.sdi.contract_2000`）提取数据库名，匹配对应的连接。一个配置文件可管理多个数据库，涉及多库时自动建立多个连接池。
+
+```bash
+data-diff run --excel mapping.xlsx --config dws_sources.yaml
+```
+
+### 方式二：DSN 连接串
+
+### 方式二：DSN 连接串
 
 ```bash
 data-diff run --excel mapping.xlsx \
   --dsn "postgresql://admin:password@dws-host:8000/edw"
 ```
 
-### 方式二：CLI 参数
+### 方式三：CLI 参数
 
 ```bash
 data-diff run --excel mapping.xlsx \
@@ -87,21 +113,27 @@ data-diff run --excel mapping.xlsx \
   --user admin --password mypassword
 ```
 
-### 方式三：环境变量
+### 方式三：CLI 参数
 
 ```bash
-export DWS_HOST=dws-host
-export DWS_PORT=8000
-export DWS_DBNAME=edw
-export DWS_USER=admin
-export DWS_PASSWORD=mypassword
-
-data-diff run --excel mapping.xlsx
+data-diff run --excel mapping.xlsx \
+  --host dws-host --port 8000 --database edw \
+  --user admin --password mypassword
 ```
+
+### 方式四：环境变量
 
 ## 运行方式
 
 ### 完整校验（连接 DWS 执行）
+
+使用配置文件（推荐）：
+
+```bash
+data-diff run --excel mapping.xlsx --config dws_sources.yaml --output-dir ./reports
+```
+
+使用 CLI 参数：
 
 ```bash
 data-diff run --excel mapping.xlsx \
@@ -114,6 +146,7 @@ data-diff run --excel mapping.xlsx \
 
 | 参数 | 说明 |
 |------|------|
+| `--config` | 数据库源配置文件路径（推荐） |
 | `--primary-keys` | 全局 fallback 主键（Excel 中未配置时使用） |
 | `--filter` | 全局 fallback 过滤条件 |
 | `--output-dir` | 报告输出目录，默认 `./reports` |

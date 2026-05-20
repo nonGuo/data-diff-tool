@@ -16,6 +16,7 @@ from data_diff_tool.config.models import (
 )
 from data_diff_tool.db.connection import DWSConfig, DWSConnection
 from data_diff_tool.db.metadata import MetadataQuery
+from data_diff_tool.db.sources import SourceConfig
 from data_diff_tool.verifier.struct import StructChecker
 from data_diff_tool.verifier.data import DataChecker
 from data_diff_tool.report.generator import ReportGenerator
@@ -33,8 +34,80 @@ def main(verbose: bool) -> None:
     )
 
 
+def _extract_old_db(fqn: str) -> str:
+    """Extract database name from a FQN like 'db.schema.table'."""
+    return fqn.split(".")[0] if fqn else ""
+
+
+def _run_single_task(
+    task: VerificationTask | SkippedTask | InventoryTask,
+    connections: dict[str, DWSConnection],
+) -> TaskResult:
+    """Execute a single verification task using the appropriate connection."""
+    start = time.time()
+
+    if isinstance(task, VerificationTask):
+        db_name = _extract_old_db(task.entity.old_fqn)
+        conn = connections.get(db_name)
+        if not conn:
+            result = TaskResult(task=task, status="failed", elapsed_ms=0)
+            click.echo(f"  ❌ No connection configured for database '{db_name}'")
+            return result
+
+        metadata = MetadataQuery(conn)
+        struct_checker = StructChecker(metadata)
+        data_checker = DataChecker(conn)
+
+        result = TaskResult(task=task)
+        try:
+            # Structure check
+            all_columns = task.identical_columns + task.cast_columns
+            struct_result = struct_checker.check(
+                task.entity.old_fqn, task.entity.new_fqn, all_columns,
+            )
+            result.struct_check = struct_result
+            compat_icon = "✅ Compatible" if struct_result.compatible else "❌ Incompatible"
+            click.echo(f"  Structure: {compat_icon}")
+            for diff in struct_result.column_diffs:
+                icon = "✅" if diff.passed else "❌"
+                click.echo(f"    {icon} {diff.column}: {diff.old_type or 'missing'} → {diff.new_type or 'missing'}")
+
+            # Data check (only if structure is compatible and columns exist)
+            if struct_result.compatible and all_columns:
+                data_result = data_checker.execute(task)
+                result.data_check = data_result
+                result.status = "passed" if data_result.column_results and all(c.passed for c in data_result.column_results) else "failed"
+                click.echo(f"  Data: {data_result.total_count:,} rows")
+                for col in data_result.column_results:
+                    icon = "✅" if col.passed else "❌"
+                    click.echo(f"    {icon} {col.column}: {col.diff_count:,} diffs ({col.diff_rate:.4f}%)")
+                click.echo(f"  Old-only rows: {data_result.old_only_count:,}, New-only rows: {data_result.new_only_count:,}")
+            elif not all_columns:
+                result.status = "skipped"
+                click.echo("  Data: skipped (no columns to check)")
+            else:
+                result.status = "failed"
+                click.echo("  Data: skipped (structure incompatible)")
+
+        except ValueError as e:
+            click.echo(f"  ❌ Config error: {e}")
+            result.status = "failed"
+        except Exception as e:
+            click.echo(f"  ❌ Error: {e}")
+            result.status = "failed"
+
+        result.elapsed_ms = int((time.time() - start) * 1000)
+        return result
+
+    elif isinstance(task, (SkippedTask, InventoryTask)):
+        return TaskResult(task=task, status="skipped", elapsed_ms=0)
+
+    return TaskResult(task=task, status="skipped", elapsed_ms=0)
+
+
 @main.command()
 @click.option("--excel", "excel_path", required=True, help="Path to the mapping Excel file")
+@click.option("--config", default=None, help="Path to DWS sources YAML config file")
 @click.option("--dsn", default=None, help="Database DSN string (e.g. postgresql://user:pass@host:port/dbname)")
 @click.option("--host", default=None, help="DWS host address")
 @click.option("--port", default=None, type=int, help="DWS port")
@@ -46,6 +119,7 @@ def main(verbose: bool) -> None:
 @click.option("--output-dir", default="./reports", show_default=True, help="Output directory for reports")
 def run(
     excel_path: str,
+    config: str | None,
     dsn: str | None,
     host: str | None,
     port: int | None,
@@ -70,84 +144,42 @@ def run(
 
     click.echo(f"Tasks: {len(verify_tasks)} to verify, {len(skipped)} skipped, {len(inventory)} inventory")
 
-    # ── Step 2: Connect to DWS ───────────────────────────────────
-    conn: DWSConnection | None = None
-    if verify_tasks:
-        config = DWSConfig.from_kwargs(dsn=dsn, host=host, port=port, dbname=database, user=user, password=password)
-        click.echo(f"Connecting to DWS: {config.masked_repr()}")
-        conn = DWSConnection(config)
+    # ── Step 2: Establish connections ────────────────────────────
+    connections: dict[str, DWSConnection] = {}  # keyed by old db name
+
+    if verify_tasks and config:
+        source_cfg = SourceConfig(config)
+        # Collect unique old db names
+        old_fqns = list({t.entity.old_fqn for t in verify_tasks if t.entity.old_fqn})
+        sources = source_cfg.get_unique_sources(old_fqns)
+        for db_name, source in sources.items():
+            cfg = DWSConfig.from_source(source, dbname=db_name)
+            click.echo(f"Connecting to [{db_name}]: {cfg.masked_repr()}")
+            conn = DWSConnection(cfg)
+            conn.connect()
+            connections[db_name] = conn
+
+    elif verify_tasks:
+        # Fallback: CLI params / env vars (single connection for all tasks)
+        cfg = DWSConfig.from_kwargs(dsn=dsn, host=host, port=port, dbname=database, user=user, password=password)
+        click.echo(f"Connecting to DWS: {cfg.masked_repr()}")
+        conn = DWSConnection(cfg)
         conn.connect()
+        # Route all tasks to this single connection
+        for task in verify_tasks:
+            db_name = _extract_old_db(task.entity.old_fqn)
+            connections[db_name] = conn
 
     # ── Step 3: Run verification ─────────────────────────────────
     results: list[TaskResult] = []
 
-    if conn:
-        metadata = MetadataQuery(conn)
-        struct_checker = StructChecker(metadata)
-        data_checker = DataChecker(conn)
+    for task in tasks:
+        if isinstance(task, VerificationTask):
+            click.echo(f"\n{'='*60}")
+            click.echo(f"Checking: {task.entity.old_fqn} → {task.entity.new_fqn}")
 
-        for task in tasks:
-            start = time.time()
-
-            if isinstance(task, VerificationTask):
-                click.echo(f"\n{'='*60}")
-                click.echo(f"Checking: {task.entity.old_fqn} → {task.entity.new_fqn}")
-
-                result = TaskResult(task=task)
-                try:
-                    # Structure check
-                    all_columns = task.identical_columns + task.cast_columns
-                    struct_result = struct_checker.check(task.entity.old_fqn, task.entity.new_fqn, all_columns)
-                    result.struct_check = struct_result
-                    click.echo(f"  Structure: {'✅ Compatible' if struct_result.compatible else '❌ Incompatible'}")
-                    for diff in struct_result.column_diffs:
-                        icon = "✅" if diff.passed else "❌"
-                        click.echo(f"    {icon} {diff.column}: {diff.old_type or 'missing'} → {diff.new_type or 'missing'}")
-
-                    # Data check (only if structure is compatible and columns exist)
-                    if struct_result.compatible and all_columns:
-                        data_result = data_checker.execute(task)
-                        result.data_check = data_result
-                        result.status = "passed" if data_result.column_results and all(c.passed for c in data_result.column_results) else "failed"
-                        click.echo(f"  Data: {data_result.total_count:,} rows")
-                        for col in data_result.column_results:
-                            icon = "✅" if col.passed else "❌"
-                            click.echo(f"    {icon} {col.column}: {col.diff_count:,} diffs ({col.diff_rate:.4f}%)")
-                        click.echo(f"  Old-only rows: {data_result.old_only_count:,}, New-only rows: {data_result.new_only_count:,}")
-                    elif not all_columns:
-                        result.status = "skipped"
-                        click.echo("  Data: skipped (no columns to check)")
-                    else:
-                        result.status = "failed"
-                        click.echo("  Data: skipped (structure incompatible)")
-
-                except ValueError as e:
-                    click.echo(f"  ❌ Config error: {e}")
-                    result.status = "failed"
-                except Exception as e:
-                    click.echo(f"  ❌ Error: {e}")
-                    result.status = "failed"
-
-                result.elapsed_ms = int((time.time() - start) * 1000)
-                results.append(result)
-
-            elif isinstance(task, SkippedTask):
-                results.append(TaskResult(
-                    task=task,
-                    status="skipped",
-                    elapsed_ms=0,
-                ))
-            elif isinstance(task, InventoryTask):
-                results.append(TaskResult(
-                    task=task,
-                    status="skipped",
-                    elapsed_ms=0,
-                ))
-
-    else:
-        # No DWS connection — wrap tasks as-is
-        for task in tasks:
-            results.append(TaskResult(task=task, status="skipped"))
+        result = _run_single_task(task, connections)
+        results.append(result)
 
     # ── Step 4: Generate report ──────────────────────────────────
     click.echo(f"\nGenerating reports to: {output_dir}")
@@ -156,7 +188,7 @@ def run(
     click.echo(f"Report saved: {report_path}")
 
     # Cleanup
-    if conn:
+    for conn in connections.values():
         conn.close()
 
     # Summary

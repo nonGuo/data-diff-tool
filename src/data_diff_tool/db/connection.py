@@ -142,6 +142,17 @@ class DWSConfig:
         parts.append("password=****")
         return " ".join(parts)
 
+    @classmethod
+    def from_source(cls, source: Any, dbname: str | None = None) -> DWSConfig:
+        """Build DWSConfig from a DWSSource object."""
+        return cls(
+            host=source.host,
+            port=source.port,
+            dbname=dbname,
+            user=source.user,
+            password=source.password,
+        )
+
 
 class DWSConnection:
     """Manages a connection pool to DWS database."""
