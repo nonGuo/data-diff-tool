@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-diff-tool"
+version = "0.1.0"
+description = "Data warehouse migration verification tool - automates consistency checks between old and new tables"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "psycopg2-binary>=2.9",
+    "openpyxl>=3.1",
+    "Jinja2>=3.1",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+data-diff = "data_diff_tool.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
