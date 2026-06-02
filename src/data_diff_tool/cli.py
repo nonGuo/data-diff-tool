@@ -149,15 +149,14 @@ def run(
 
     if verify_tasks and config:
         source_cfg = SourceConfig(config)
-        # Collect unique old db names
         old_fqns = list({t.entity.old_fqn for t in verify_tasks if t.entity.old_fqn})
         sources = source_cfg.get_unique_sources(old_fqns)
-        for db_name, source in sources.items():
-            cfg = DWSConfig.from_source(source, dbname=db_name)
-            click.echo(f"Connecting to [{db_name}]: {cfg.masked_repr()}")
+        for alias, source in sources.items():
+            cfg = DWSConfig.from_source(source, dbname=source.database)
+            click.echo(f"Connecting to [{alias}] ({source.database}): {cfg.masked_repr()}")
             conn = DWSConnection(cfg)
             conn.connect()
-            connections[db_name] = conn
+            connections[alias] = conn
 
     elif verify_tasks:
         # Fallback: CLI params / env vars (single connection for all tasks)

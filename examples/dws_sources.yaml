@@ -1,6 +1,7 @@
 # DWS Data Sources Configuration
-# Each key is a database name (first component of FQN).
-# The tool auto-matches by extracting the db name from table FQNs.
+# Each key is an alias that matches the database name in Excel FQNs.
+# The ``database`` field is the actual database name to connect to.
+# The alias and actual database name are decoupled.
 #
 # Usage:
 #   data-diff run --excel mapping.xlsx --config dws_sources.yaml
@@ -9,11 +10,13 @@ sources:
   edw:
     host: 10.0.1.100
     port: 8000
+    database: edw_prod
     user: admin
     password: changeme
 
   ods:
     host: 10.0.2.200
     port: 8000
+    database: ods_staging
     user: readonly
     password: changeme

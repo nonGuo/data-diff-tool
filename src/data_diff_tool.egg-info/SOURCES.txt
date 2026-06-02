@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 src/data_diff_tool/__init__.py
 src/data_diff_tool/cli.py
@@ -13,12 +14,17 @@ src/data_diff_tool/config/models.py
 src/data_diff_tool/db/__init__.py
 src/data_diff_tool/db/connection.py
 src/data_diff_tool/db/metadata.py
+src/data_diff_tool/db/sources.py
 src/data_diff_tool/report/__init__.py
 src/data_diff_tool/report/generator.py
 src/data_diff_tool/verifier/__init__.py
 src/data_diff_tool/verifier/data.py
 src/data_diff_tool/verifier/struct.py
+src/data_diff_tool/web/__init__.py
+src/data_diff_tool/web/app.py
+tests/test_connection.py
 tests/test_data_check.py
 tests/test_excel_parser.py
 tests/test_report.py
+tests/test_sources.py
 tests/test_struct_check.py

@@ -8,6 +8,7 @@
 - **数据一致性校验**：通过 FULL JOIN + 主键关联，统计字段差异行数与差异率
 - **抽样配置**：通过 Excel 指定每张表的校验主键和过滤条件
 - **HTML 报告**：单文件自包含报告，浏览器直接打开，差异行红色高亮
+- **Web UI**：基于 Streamlit 的浏览器界面，无需命令行操作
 
 ## 安装
 
@@ -15,13 +16,104 @@
 pip install -e .
 ```
 
-或指定开发依赖：
+CLI 模式（含开发依赖）：
 
 ```bash
 pip install -e ".[dev]"
 ```
 
+Web UI 模式：
+
+```bash
+pip install -e ".[web]"
+```
+
 > 需要 Python 3.12+
+
+## 运行方式
+
+### Web UI（推荐）
+
+```bash
+streamlit run src/data_diff_tool/web/app.py
+```
+
+启动后访问 `http://localhost:8501`，通过浏览器完成：
+1. 上传 Mapping Excel 文件
+2. 配置数据源（侧边栏文本编辑或上传 YAML）
+3. 预览任务列表
+4. 一键执行校验（实时进度展示）
+5. 查看/下载 HTML 报告
+
+### CLI 模式
+
+完整校验（连接 DWS 执行）：
+
+```bash
+data-diff run --excel mapping.xlsx --config dws_sources.yaml --output-dir ./reports
+```
+
+仅解析模式（不连接数据库）：
+
+```bash
+data-diff dry-run --excel mapping.xlsx
+```
+
+## 配置方式
+
+### 方式一：配置文件（推荐）
+
+创建 `dws_sources.yaml` 文件，按数据库名组织连接信息：
+
+```yaml
+sources:
+  edw:
+    host: 10.0.1.100
+    port: 8000
+    database: edw
+    user: admin
+    password: changeme
+  ods:
+    host: 10.0.2.200
+    port: 8000
+    user: readonly
+    password: changeme
+```
+
+Key（如 `edw`）对应 Excel 中 FQN 的第一部分（库名）。`database` 字段为实际连接的数据库名，可与 Key 不同。一个配置文件可管理多个数据库。
+
+```bash
+data-diff run --excel mapping.xlsx --config dws_sources.yaml
+```
+
+Web UI 中可在侧边栏直接编辑 YAML 文本或上传 YAML 文件。
+
+### 方式二：DSN 连接串
+
+```bash
+data-diff run --excel mapping.xlsx \
+  --dsn "postgresql://admin:password@dws-host:8000/edw"
+```
+
+### 方式三：CLI 参数
+
+```bash
+data-diff run --excel mapping.xlsx \
+  --host dws-host --port 8000 --database edw \
+  --user admin --password mypassword
+```
+
+### 方式四：环境变量
+
+```bash
+export DWS_HOST=dws-host
+export DWS_PORT=8000
+export DWS_DBNAME=edw
+export DWS_USER=admin
+export DWS_PASSWORD=mypassword
+
+data-diff run --excel mapping.xlsx
+```
 
 ## Excel 输入格式
 
@@ -68,98 +160,6 @@ pip install -e ".[dev]"
 - **主键字段**：逗号分隔，支持复合主键
 - **过滤条件**：WHERE 子句，新旧表均使用相同过滤条件
 
-## 配置方式
-
-数据库连接支持三种配置方式（优先级从高到低）：
-
-### 方式一：配置文件（推荐）
-
-创建 `dws_sources.yaml` 文件，按数据库名组织连接信息：
-
-```yaml
-sources:
-  edw:
-    host: 10.0.1.100
-    port: 8000
-    user: admin
-    password: changeme
-  ods:
-    host: 10.0.2.200
-    port: 8000
-    user: readonly
-    password: changeme
-```
-
-工具会自动从 Excel 中的表 FQN（如 `edw.sdi.contract_2000`）提取数据库名，匹配对应的连接。一个配置文件可管理多个数据库，涉及多库时自动建立多个连接池。
-
-```bash
-data-diff run --excel mapping.xlsx --config dws_sources.yaml
-```
-
-### 方式二：DSN 连接串
-
-### 方式二：DSN 连接串
-
-```bash
-data-diff run --excel mapping.xlsx \
-  --dsn "postgresql://admin:password@dws-host:8000/edw"
-```
-
-### 方式三：CLI 参数
-
-```bash
-data-diff run --excel mapping.xlsx \
-  --host dws-host --port 8000 --database edw \
-  --user admin --password mypassword
-```
-
-### 方式三：CLI 参数
-
-```bash
-data-diff run --excel mapping.xlsx \
-  --host dws-host --port 8000 --database edw \
-  --user admin --password mypassword
-```
-
-### 方式四：环境变量
-
-## 运行方式
-
-### 完整校验（连接 DWS 执行）
-
-使用配置文件（推荐）：
-
-```bash
-data-diff run --excel mapping.xlsx --config dws_sources.yaml --output-dir ./reports
-```
-
-使用 CLI 参数：
-
-```bash
-data-diff run --excel mapping.xlsx \
-  --host dws-host --port 8000 --database edw \
-  --user admin --password mypassword \
-  --output-dir ./reports
-```
-
-可选参数：
-
-| 参数 | 说明 |
-|------|------|
-| `--config` | 数据库源配置文件路径（推荐） |
-| `--primary-keys` | 全局 fallback 主键（Excel 中未配置时使用） |
-| `--filter` | 全局 fallback 过滤条件 |
-| `--output-dir` | 报告输出目录，默认 `./reports` |
-| `-v` | 开启 debug 日志 |
-
-### 仅解析模式（不连接数据库）
-
-预览 Excel 解析结果，确认任务列表：
-
-```bash
-data-diff dry-run --excel mapping.xlsx
-```
-
 ## 输出报告
 
 运行完成后在 `./reports` 目录下生成 `report_YYYYMMDD_HHMMSS.html`，包含：
@@ -175,9 +175,11 @@ data-diff dry-run --excel mapping.xlsx
 | 组件 | 依赖 |
 |------|------|
 | CLI | click |
+| Web UI | streamlit |
 | 数据库 | psycopg2-binary (PostgreSQL/GaussDB/DWS) |
 | Excel | openpyxl |
 | 报告 | Jinja2 |
+| 配置 | PyYAML |
 
 ## 运行测试
 

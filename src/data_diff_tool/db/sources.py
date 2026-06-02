@@ -18,6 +18,7 @@ class DWSSource:
 
     name: str
     host: str
+    database: str = ""
     port: int = 8000
     user: str = ""
     password: str = ""
@@ -36,6 +37,7 @@ class SourceConfig:
             self._sources[name] = DWSSource(
                 name=name,
                 host=info["host"],
+                database=info.get("database", name),
                 port=int(info.get("port", 8000)),
                 user=info.get("user", ""),
                 password=info.get("password", ""),
